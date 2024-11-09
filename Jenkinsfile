@@ -1,42 +1,52 @@
 pipeline {
-    agent any
-    environment {
-        DOCKER_REPO = 'tsdadmin/villageaccountingapi' // ชื่อ Docker repository ของคุณ
-        DOCKER_CREDENTIALS_ID = 'jen-dockerhub' // Jenkins credentials ID สำหรับ Docker Hub
-        GIT_CREDENTIALS_ID = 'gitlab-token' // Jenkins credentials ID สำหรับ GitLab หรือ GitHub
-    }
-    stages {
-        stage('Clone Repository') {
-            steps {
-                // ดึงโค้ดจาก Git repository โดยใช้ credentials สำหรับ Git
-                git credentialsId: GIT_CREDENTIALS_ID, url: 'https://gitlab.com/villageaccounting/villageaccapi.git', branch: 'main'
-            }
-        }
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    // สร้าง Docker image โดยใช้ Jenkins build ID เป็น tag
-                    docker.build("${DOCKER_REPO}:${env.BUILD_ID}")
-                }
-            }
-        }
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    // Push Docker image ไปยัง Docker Hub โดยใช้ credentials สำหรับ Docker Hub
-                    docker.withRegistry('', DOCKER_CREDENTIALS_ID) {
-                        docker.image("${DOCKER_REPO}:${env.BUILD_ID}").push()
-                    }
-                }
-            }
-        }
-    }
-    post {
-        always {
-            script {
-                // ลบ Docker image หลังจาก build เสร็จสิ้น
-                docker.image("${DOCKER_REPO}:${env.BUILD_ID}").remove()
-            }
-        }
-    }
+	agent any
+	tools {
+		nodejs 'NodeJS'
+	}
+	environment {
+		DOCKER_HUB_CREDENTIALS_ID = 'jen-dockerhub'
+		DOCKER_HUB_REPO = 'tsdadmin/villageaccountingapi'
+	}
+	stages {
+		stage('Checkout Github'){
+			steps {
+				git branch: 'main', credentialsId: 'gitlab-token', url: 'https://gitlab.com/villageaccounting/villageaccapi.git'
+			}
+		}		
+		stage('Install node dependencies'){
+			steps {
+				sh 'npm install'
+			}
+		}
+		stage('Build Docker Image'){
+			steps {
+				script {
+					dockerImage = docker.build("${DOCKER_HUB_REPO}:latest")
+				}
+			}
+		}
+		stage('Trivy Scan'){
+			steps {
+				sh 'trivy --severity HIGH,CRITICAL --no-progress image --format table -o trivy-scan-report.txt ${DOCKER_HUB_REPO}:latest'
+			}
+		}
+		stage('Push Image to DockerHub'){
+			steps {
+				script {
+					docker.withRegistry('https://registry.hub.docker.com', "${DOCKER_HUB_CREDENTIALS_ID}"){
+						dockerImage.push('latest')
+					}
+				}
+			}
+		}
+	}
+
+	post {
+		success {
+			echo 'Build&Deploy completed succesfully!'
+		}
+		failure {
+			echo 'Build&Deploy failed. Check logs.'
+		}
+	}
 }
